@@ -1,4 +1,5 @@
 import torch
+torch.manual_seed(42)
 from torch.utils.data import Dataset, DataLoader
 from datetime import datetime
 import pandas as pd
@@ -226,18 +227,20 @@ class Transformer(torch.nn.Module):
             assert dec_hloc_target_features.dim() == 3, "dec_hloc_features must have 3 dimensions (batch_size, seq_len, num_pred_hloc)"
             assert dec_hloc_target_features.shape[-1] == self.config["num_pred_hloc"], f"dec_hloc_target_features last dimension must be {self.config['num_pred_hloc']}"
             dec_hloc_target_features = dec_hloc_target_features.to(self.device)
-            loss1 = torch.nn.functional.huber_loss(out1, dec_hloc_target_features)
+            loss1 = torch.nn.functional.huber_loss(out1, dec_hloc_target_features) * self.config["hloc_loss_weight"]
         else:
             loss1 = 0
         if dec_trend_target_indices is not None:
             assert dec_trend_target_indices.dim() == 2, "dec_trend_target_indices must have 2 dimensions (batch_size, seq_len)"
             dec_trend_target_indices = dec_trend_target_indices.to(self.device)
-            loss2 = torch.nn.functional.cross_entropy(out2.flatten(0, 1), dec_trend_target_indices.flatten())
+            loss2 = torch.nn.functional.cross_entropy(out2.flatten(0, 1), dec_trend_target_indices.flatten()) * self.config["trend_loss_weight"]
+            acc = (out2.flatten(0, 1).argmax(dim=-1) == dec_trend_target_indices.flatten()).to(torch.float32).mean()
         else:
             loss2 = 0
+            acc = 0
         
-        loss = loss1 + self.config["trend_loss_weight"] * loss2
-        return {"hloc_logits": out1, "trend_logits": out2, "loss": loss}
+        loss = loss1 + loss2
+        return {"hloc_logits": out1, "trend_logits": out2, "loss": loss, "trend_acc": acc.item(), "hloc_Huber_loss": loss1.item(), "trend_CE_loss": loss2.item()}
     
     def calc_num_params(self) -> None:
         num_params = sum([i.numel() for i in self.parameters() if i.requires_grad])
@@ -254,7 +257,8 @@ if __name__ == "__main__":
         "num_hloc_features": 16,
         "num_time_features": 5,
         "num_pred_hloc": 4,
-        "trend_loss_weight": 0.5
+        "trend_loss_weight": 0.5,
+        "hloc_loss_weight": 0.5
     }
     enc_hloc_features = torch.rand(size=(4, 256, 16))
     enc_trend_indices = torch.randint(low=0, high=201, size=(4, 256))

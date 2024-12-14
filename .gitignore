@@ -1,3 +1,4 @@
 .vscode
 .DS_Store
 data/nifty_trend_data.csv
+__pycache__

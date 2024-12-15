@@ -1,4 +1,8 @@
 .vscode
 .DS_Store
 data/nifty_trend_data.csv
+data/nifty_trend_data.pkl
 __pycache__
+outputs/ckpt
+wandb
+*.out

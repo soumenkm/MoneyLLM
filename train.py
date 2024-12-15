@@ -1,7 +1,7 @@
 import os, json, pickle, torch, wandb, tqdm
 if __name__ == "__main__":
     wandb.login()
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     
 torch.manual_seed(42)
 from pathlib import Path
@@ -17,7 +17,7 @@ class Trainer:
         self.config = config
         self.device = device
 
-        self.ds = StockDataset(csv_file=self.config["dataset_path"], max_seq_length=self.config["model_config"]["max_seq_length"], time_format=self.config["time_format"], frac=self.config["frac"])
+        self.ds = StockDataset(pkl_file=self.config["dataset_path"], max_seq_length=self.config["model_config"]["max_seq_length"], time_format=self.config["time_format"], frac=self.config["frac"])
         self.train_ds = Subset(dataset=self.ds, indices=range(0, int(0.8 * len(self.ds))))
         self.eval_ds = Subset(dataset=self.ds, indices=range(int(0.8 * len(self.ds)), len(self.ds)))
 
@@ -27,8 +27,10 @@ class Trainer:
         self.project_name = "transformer_pretrain"
         os.environ["WANDB_PROJECT"] = self.project_name
         self.run_name = f"{self.config['frac']:.2f}_{self.config['initial_lr']:.1e}"
-        self.output_dir = f"outputs/ckpt/{self.project_name}/{self.run_name}"
-
+        self.output_dir = Path(Path.cwd(), f"outputs/ckpt/{self.project_name}/{self.run_name}")
+        if not self.output_dir.exists():
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            
         self.model = Transformer(device=self.device, config=self.config["model_config"]).to(self.device) 
         self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=self.config['initial_lr'], weight_decay=self.config["weight_decay"], betas=self.config["adam_betas"])
         self.scheduler = get_linear_schedule_with_warmup(optimizer=self.optimizer,
@@ -104,15 +106,14 @@ class Trainer:
                 if self.wandb_log:
                     wandb.log({
                         "train/loss": loss.item(), 
-                        "train/hloc_Huber_loss": out["hloc_Huber_loss"], 
-                        "train/trend_CE_loss": out["trend_CE_loss"], 
-                        "train/trend_acc": out["trend_acc"], 
+                        "train/hloc_loss": out["hloc_loss"], 
+                        "train/trend_loss": out["trend_loss"], 
                         "train/learning_rate": lr, 
                         "train/grad_norm": gn, 
                         "train/epoch": ep, 
                         "train/step": self.train_step})
                     self.train_step += 1
-                pbar.set_postfix({"loss": f"{loss.item():.3f}", "huber_loss": f"{out['hloc_Huber_loss']:.3f}", "CE_loss": f'{out["trend_CE_loss"]:.3f}', "acc": f"{out['trend_acc']:.3f}", "lr": f"{lr:.3e}", "gn": f"{gn:.3f}"})                        
+                pbar.set_postfix({"loss": f"{loss.item():.3f}", "huber_loss": f"{out['hloc_loss']:.3f}", "trend_loss": f'{out["trend_loss"]:.3f}', "lr": f"{lr:.3e}", "gn": f"{gn:.3f}"})                        
     
     def _validate_dataloader(self, ep: int) -> None:
         with tqdm.tqdm(iterable=self.eval_dl, desc=f"[VAL] ep: {ep}/{self.num_epochs-1}", total=len(self.eval_dl), unit="step", colour="green") as pbar:
@@ -123,13 +124,12 @@ class Trainer:
                 if self.wandb_log:
                     wandb.log({
                         "eval/loss": loss.item(), 
-                        "eval/hloc_Huber_loss": out["hloc_Huber_loss"], 
-                        "eval/trend_CE_loss": out["trend_CE_loss"], 
-                        "eval/trend_acc": out["trend_acc"], 
+                        "eval/hloc_loss": out["hloc_loss"], 
+                        "eval/trend_loss": out["trend_loss"], 
                         "eval/epoch": ep, 
                         "eval/step": self.eval_step})
                     self.eval_step += 1
-                pbar.set_postfix({"loss": f"{loss.item():.3f}", "huber_loss": f"{out['hloc_Huber_loss']:.3f}", "CE_loss": f'{out["trend_CE_loss"]:.3f}', "acc": f"{out['trend_acc']:.3f}"})                        
+                pbar.set_postfix({"loss": f"{loss.item():.3f}", "huber_loss": f"{out['hloc_loss']:.3f}", "CE_loss": f'{out["trend_loss"]:.3f}'})                        
     
     def train(self) -> None:
         print(self.model)
@@ -156,7 +156,7 @@ class Trainer:
 
 def main(device: torch.device) -> None:
     config = {
-        "dataset_path": Path(Path.cwd(), "data/nifty_trend_data.csv"),
+        "dataset_path": Path(Path.cwd(), "data/nifty_trend_data.pkl"),
         "time_format": "%Y-%m-%d %H:%M:%S",
         "model_config": {
             "embedding_dim": 128, 
@@ -168,13 +168,13 @@ def main(device: torch.device) -> None:
             "num_hloc_features": 16,
             "num_time_features": 5,
             "num_pred_hloc": 4,
-            "hloc_loss_weight": 0.001,
-            "trend_loss_weight": 1.5
+            "hloc_loss_weight": 1,
+            "trend_loss_weight": 1
         },
-        "num_epochs": 1, "batch_size": 1, "frac": 1.0,
+        "num_epochs": 5, "batch_size": 16, "frac": 1.0,
         "initial_lr": 1e-5, "max_grad_norm": 10.0, "weight_decay": 0.1,
         "adam_betas": (0.95, 0.999), "num_ckpt_per_epoch": 1,
-        "wandb_log": False
+        "wandb_log": True
     }
     trainer = Trainer(device=device, config=config)
     trainer.train()

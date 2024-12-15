@@ -184,7 +184,7 @@ class Transformer(torch.nn.Module):
         self.layernorm2 = torch.nn.LayerNorm(normalized_shape=(self.d,)).to(self.device)
         self.dropout = torch.nn.Dropout(p=self.config["dropout_prob"]).to(self.device)
         self.hloc_output = torch.nn.Linear(in_features=self.d, out_features=self.config["num_pred_hloc"]).to(self.device)
-        self.trend_output = torch.nn.Linear(in_features=self.d, out_features=self.config["num_trends"]).to(self.device)
+        self.trend_output = torch.nn.Linear(in_features=self.d, out_features=1).to(self.device)
          
     def forward(self, enc_hloc_features: torch.Tensor, enc_trend_indices: torch.Tensor, enc_time_features: torch.Tensor,
                 dec_hloc_features: torch.Tensor, dec_trend_indices: torch.Tensor, dec_time_features: torch.Tensor, 
@@ -221,7 +221,7 @@ class Transformer(torch.nn.Module):
         z2 = self.layernorm2(y) # (b, Td, d)
         
         out1 = self.hloc_output(z2) # (b, Td, 4)
-        out2 = self.trend_output(z2) # (b, Td, 201)
+        out2 = self.trend_output(z2) # (b, Td, 1)
         
         if dec_trend_target_indices is not None:
             assert dec_hloc_target_features.dim() == 3, "dec_hloc_features must have 3 dimensions (batch_size, seq_len, num_pred_hloc)"
@@ -233,14 +233,12 @@ class Transformer(torch.nn.Module):
         if dec_trend_target_indices is not None:
             assert dec_trend_target_indices.dim() == 2, "dec_trend_target_indices must have 2 dimensions (batch_size, seq_len)"
             dec_trend_target_indices = dec_trend_target_indices.to(self.device)
-            loss2 = torch.nn.functional.cross_entropy(out2.flatten(0, 1), dec_trend_target_indices.flatten()) * self.config["trend_loss_weight"]
-            acc = (out2.flatten(0, 1).argmax(dim=-1) == dec_trend_target_indices.flatten()).to(torch.float32).mean()
+            loss2 = torch.nn.functional.huber_loss(out2.squeeze(-1), dec_trend_target_indices) * self.config["trend_loss_weight"]
         else:
             loss2 = 0
-            acc = 0
         
         loss = loss1 + loss2
-        return {"hloc_logits": out1, "trend_logits": out2, "loss": loss, "trend_acc": acc.item(), "hloc_Huber_loss": loss1.item(), "trend_CE_loss": loss2.item()}
+        return {"hloc_logits": out1, "trend_logits": out2, "loss": loss, "hloc_loss": loss1.item(), "trend_loss": loss2.item()}
     
     def calc_num_params(self) -> None:
         num_params = sum([i.numel() for i in self.parameters() if i.requires_grad])

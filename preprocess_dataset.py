@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import pickle
 
 df = pd.read_csv("data/NIFTY 50_minute_2015-2024.csv")
 df['avg'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
@@ -7,31 +8,20 @@ df['prev_avg'] = df['avg'].shift(1)
 df_avg = df.copy()
 df_avg['change'] = ((df_avg['avg'] - df_avg['prev_avg'])/df_avg['prev_avg']) * 100
 
-# Create trends for positive and negative changes separately
-positive_mask = df_avg['change'] >= 0
-negative_mask = df_avg['change'] < 0
+# Bin the changes into 200 quantiles
+df_avg['quantile_bin'] = pd.qcut(df_avg['change'], q=200, duplicates='drop')  # Handle duplicate bins if data doesn't allow full 200 bins
 
-# Initialize bucket column with NaN
-df_avg['trends'] = pd.NA
+# If you want to access the quantile ranges
+quantile_ranges = df_avg['quantile_bin'].unique()
 
-# Handle positive changes
-if positive_mask.any():
-    positive_changes = df_avg.loc[positive_mask, 'change']
-    n_pos = len(positive_changes)
-    pos_labels = [f'u{i+1}' for i in range(100)]
-    pos_bins = pd.qcut(positive_changes, q=100, labels=pos_labels)
-    df_avg.loc[positive_mask, 'trends'] = pos_bins
-
-# Handle negative changes
-if negative_mask.any():
-    negative_changes = df_avg.loc[negative_mask, 'change']
-    n_neg = len(negative_changes)
-    neg_labels = [f'd{i+1}' for i in range(100)]
-    neg_bins = pd.qcut(negative_changes, q=100, labels=neg_labels)
-    df_avg.loc[negative_mask, 'trends'] = neg_bins
+# Optionally convert the bins to numeric indices
+df_avg['trends'] = df_avg['quantile_bin'].cat.codes + 1  # Adding 1 to make the range 1 to 200
+df_avg["quantile"] = pd.NA
+df_avg['quantile'] = df_avg['quantile'].astype('object')
+df_avg.at[0, "quantile"] = [(i.left.item(), i.right.item()) for i in quantile_ranges.sort_values().tolist()[:-1]]
 
 # Load the original CSV
-df = df_avg.iloc[1:, :].copy()
+df = df_avg.iloc[0:, :].copy()
 
 # Calculate the 12 technical indicators
 
@@ -83,5 +73,7 @@ rs = avg_gain / avg_loss
 df['rsi_20'] = 100 - (100 / (1 + rs))
 
 # Save the updated dataframe to a new CSV
-output_file_path = 'data/nifty_trend_data.csv'
+output_file_path = 'data/nifty_trend_data.pkl'
 df.to_csv(output_file_path, index=True)
+with open(output_file_path, "wb") as f:
+    pickle.dump(df, f)
